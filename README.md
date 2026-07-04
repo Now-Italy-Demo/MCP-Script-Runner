@@ -6,7 +6,7 @@ such as Build Agent a single tool, `run_script`, that can execute server-side
 JavaScript in global scope as the authenticated ServiceNow user.
 
 Download and install the update set:
-[MCP_Script_Runner_1.0.11.xml](https://raw.githubusercontent.com/Now-Italy-Demo/MCP-Script-Runner/main/MCP_Script_Runner_1.0.11.xml)
+[MCP_Script_Runner_1.0.11.xml](https://github.com/Now-Italy-Demo/MCP-Script-Runner/raw/refs/heads/main/MCP_Script_Runner_1.0.11.xml?download=)
 
 This is remote code execution by design. Install it only on instances where you
 understand and accept that risk, and grant access only to trusted users.
@@ -37,7 +37,7 @@ the configuration status and shows the latest script executions.
 
 1. In ServiceNow, go to **System Update Sets > Retrieved Update Sets**.
 2. Import the XML update set:
-   [MCP_Script_Runner_1.0.11.xml](https://raw.githubusercontent.com/Now-Italy-Demo/MCP-Script-Runner/main/MCP_Script_Runner_1.0.11.xml)
+   [MCP_Script_Runner_1.0.11.xml](https://github.com/Now-Italy-Demo/MCP-Script-Runner/raw/refs/heads/main/MCP_Script_Runner_1.0.11.xml?download=)
 3. Preview the update set.
 4. Resolve any preview issues if your instance reports them.
 5. Commit the update set.
