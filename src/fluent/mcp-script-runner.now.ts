@@ -1006,6 +1006,12 @@ const adminStatusScript = `(function (request, response) {
         }
     }
 
+    function booleanProperty(name) {
+        var value = '';
+        try { value = String(gs.getProperty(name, '') || ''); } catch (e) { value = ''; }
+        return { value: value, enabled: isActiveValue(value) };
+    }
+
     function moduleExists(queryValue) {
         try {
             var module = new GlideRecord('sys_app_module');
@@ -1254,6 +1260,7 @@ const adminStatusScript = `(function (request, response) {
         function readRecord(gr) {
             return {
                 sys_id: String(gr.getUniqueValue()),
+                assetId: getValue(gr, 'asset'),
                 asset: getDisplay(gr, 'asset'),
                 status: getValue(gr, 'status'),
                 statusDisplay: getDisplay(gr, 'status'),
@@ -1310,6 +1317,35 @@ const adminStatusScript = `(function (request, response) {
         return null;
     }
 
+    function findGovernanceReview(governance, approvalMandateEnabled) {
+        if (!governance || !governance.sys_id || !tableIsAvailable('sn_ai_governance_assessment_request')) {
+            return null;
+        }
+        try {
+            var review = new GlideRecord('sn_ai_governance_assessment_request');
+            review.addQuery('asset', governance.sys_id);
+            if (approvalMandateEnabled && review.isValidField('type')) {
+                review.addQuery('type', '2'); // Onboarding is the Start review playbook.
+            }
+            review.orderByDesc('sys_updated_on');
+            review.setLimit(1);
+            review.query();
+            if (!review.next()) { return null; }
+            return {
+                sys_id: String(review.getUniqueValue()),
+                number: getValue(review, 'number'),
+                type: getValue(review, 'type'),
+                typeDisplay: getDisplay(review, 'type'),
+                state: getValue(review, 'state'),
+                stateDisplay: getDisplay(review, 'state'),
+                closedAt: getValue(review, 'closed_at'),
+                closedAtDisplay: getDisplay(review, 'closed_at')
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
     function findBuildAgentSession(mcpServer) {
         try {
             var session = new GlideRecord('sn_mcp_client_server_session_mapping');
@@ -1355,6 +1391,8 @@ const adminStatusScript = `(function (request, response) {
     var roleStatus = currentUserRoleStatus(REQUIRED_CURRENT_USER_ROLES);
     var mcpServer = findMcpServer();
     var governance = findGovernanceDetails();
+    var approvalMandate = booleanProperty('sn_ai_governance.approval_mandate');
+    var governanceReview = findGovernanceReview(governance, approvalMandate.enabled);
     var session = findBuildAgentSession(mcpServer);
     var canCreateOAuth = gs.hasRole('admin');
     var platform = platformMeetsMinimum();
@@ -1396,12 +1434,48 @@ const adminStatusScript = `(function (request, response) {
         ? 'MCP server record exists' + (mcpServer.connectionAliasDisplay ? ' with alias ' + mcpServer.connectionAliasDisplay + '.' : ', but no connection alias is set.')
         : 'No sn_mcp_server record named "' + SERVER_NAME + '" was found.';
 
-    var governanceOk = !!(governance &&
-        (governance.status === '2' || governance.statusDisplay === 'Approved') &&
+    var governanceDeployed = !!(governance &&
         (governance.assetState === 'deployed' || governance.assetStateDisplay === 'Deployed' || governance.deployedAt));
+    var governanceReviewComplete = !!(governanceReview &&
+        (governanceReview.state === '3' || governanceReview.stateDisplay === 'Completed'));
+    var governanceOk = approvalMandate.enabled
+        ? !!(governanceDeployed && governanceReviewComplete &&
+            (governance.status === '4' || governance.statusDisplay === 'Deployed'))
+        : !!(governanceDeployed &&
+            (governance.status === '2' || governance.statusDisplay === 'Approved'));
     var governanceDetail = governance
-        ? 'AICT status ' + (governance.statusDisplay || governance.status || 'unknown') + '; state ' + (governance.assetStateDisplay || governance.assetState || 'unknown') + (governance.riskScore ? '; risk ' + governance.riskScore : '') + '.'
+        ? 'AICT status ' + (governance.statusDisplay || governance.status || 'unknown') + '; state ' + (governance.assetStateDisplay || governance.assetState || 'unknown') + (governance.riskScore ? '; risk ' + governance.riskScore : '') + '; approval mandate ' + (approvalMandate.enabled ? 'enabled' : 'disabled') + (governanceReview ? '; review ' + (governanceReview.number || governanceReview.typeDisplay || 'record') + ' ' + (governanceReview.stateDisplay || governanceReview.state || 'unknown') + (governanceReview.closedAtDisplay ? ' at ' + governanceReview.closedAtDisplay : '') : '') + '.'
         : 'No AI Control Tower governance detail for "' + SERVER_NAME + '" was found.';
+    var governanceLabel = approvalMandate.enabled
+        ? 'Step 4: AI Control Tower review completed and asset deployed'
+        : 'Step 4: AI Control Tower asset approved and deployed';
+    var governanceInstructions = approvalMandate.enabled
+        ? [
+            'Open AI Control Tower home.',
+            'Click the AI Assets list button on the left bar.',
+            'Under AI asset inventory - Managed, select MCP servers.',
+            'Open the ' + SERVER_NAME + ' MCP server record.',
+            'Click Start review.',
+            'Complete every step in the review playbook.',
+            'Do not add tasks to the activities; complete the activity steps directly.',
+            'Click Check config in this page to confirm the completed review.'
+        ]
+        : [
+            'Open AI Control Tower home.',
+            'Click the AI Assets list button on the left bar.',
+            'Under AI asset inventory - Managed, select MCP servers.',
+            'Open the ' + SERVER_NAME + ' asset.',
+            'Click Request approval.',
+            'Click the approval ID shown in the popup.',
+            'Assign the approval to yourself.',
+            'Advance each playbook step, complete the risk score, then approve/deploy the asset.'
+        ];
+    var governanceLink = governanceOk && governanceReview && approvalMandate.enabled
+        ? formUrl('sn_ai_governance_assessment_request', governanceReview.sys_id)
+        : (governanceOk ? formUrl('sn_ai_governance_asset_governance_details', governance.sys_id) : '/now/ai-control-tower/home');
+    var governanceLinkLabel = governanceOk && governanceReview && approvalMandate.enabled
+        ? 'Open completed review'
+        : (governanceOk ? 'Open approval status' : 'Open AICT');
 
     var inboundOk = !!(oauth && oauth.scope === 'unrestricted');
     var inboundDetail = oauth
@@ -1471,19 +1545,10 @@ const adminStatusScript = `(function (request, response) {
                 'Click Check config in this page to refresh configuration status.'
             ],
             mcpServer ? formUrl('sn_mcp_server', mcpServer.sys_id) : connectHubLink, mcpServer ? 'Open server' : connectHubLinkLabel),
-        step('step_4_aict', 'Step 4: AI Control Tower asset approved and deployed', governanceOk,
+        step('step_4_aict', governanceLabel, governanceOk,
             governanceDetail,
-            [
-                'Open AI Control Tower home.',
-                'Click the AI Assets list button on the left bar.',
-                'Under AI asset inventory - Managed, select MCP servers.',
-                'Open the ' + SERVER_NAME + ' asset.',
-                'Click Request approval.',
-                'Click the approval ID shown in the popup.',
-                'Assign the approval to yourself.',
-                'Advance each playbook step, complete the risk score, then approve/deploy the asset.'
-            ],
-            governanceOk ? formUrl('sn_ai_governance_asset_governance_details', governance.sys_id) : '/now/ai-control-tower/home', governanceOk ? 'Open approval status' : 'Open AICT'),
+            governanceInstructions,
+            governanceLink, governanceLinkLabel),
         step('step_5_inbound_scope', 'Step 5: OAuth inbound integration is broadly scoped', inboundOk,
             inboundDetail,
             [
@@ -1752,7 +1817,7 @@ const adminAssignRolesScript = `(function (request, response) {
 const mcpPostScript = `(function (request, response) {
     var DEFAULT_PROTOCOL_VERSION = '2025-06-18';
     var SERVER_NAME = 'mcp-script-runner';
-    var SERVER_VERSION = '1.0.11';
+    var SERVER_VERSION = '1.0.12';
     var LOG_SOURCE = 'MCPScriptRunner';
     var SERVER_INSTRUCTIONS = 'MCP Script Runner exposes one tool, run_script, which executes server-side JavaScript on this ServiceNow instance (global scope, ES5/Rhino engine), running as the authenticated caller. HOW TO USE: end the script with an expression to return its value; call out(...) or print(...) to emit inline output lines (objects are JSON-stringified). gs.print / gs.info / gs.log write to the system log only and are NOT returned inline. SECURITY: this is remote code execution, gated by the mcp_script_runner role and audit-logged on every call. Prefer read-only queries and be deliberate with writes.';
 
